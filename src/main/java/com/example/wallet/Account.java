@@ -11,9 +11,7 @@ import jakarta.persistence.Version;
 import jakarta.validation.constraints.NotBlank;
 
 @Entity
-@Table(
-    name = "accounts"
-)
+@Table(name = "accounts")
 public class Account {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -27,10 +25,11 @@ public class Account {
     private long version;
     private Instant createdAt = Instant.now();
 
-    protected Account(){
+    protected Account() {
 
     }
-    public Account(String ownerId){
+
+    public Account(String ownerId) {
         if (ownerId == null || ownerId.isBlank()) {
             throw new IllegalArgumentException("Owner ID cannot be null or blank");
         }
@@ -58,4 +57,15 @@ public class Account {
         return createdAt;
     }
 
+    public long deposit(long amountCents) {
+        if (amountCents <= 0)
+            throw new IllegalArgumentException("Deposit amount needs to be greater than 0");
+
+        try {
+            balanceCents = Math.addExact(balanceCents, amountCents);
+        } catch (ArithmeticException e) {
+            throw new DepositTooLargeException();
+        }
+        return balanceCents;
+    }
 }

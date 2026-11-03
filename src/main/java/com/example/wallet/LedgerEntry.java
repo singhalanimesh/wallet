@@ -47,7 +47,7 @@ public class LedgerEntry {
         this.balanceAfterCents = balanceAfterCents;
     }
 
-    public LedgerEntry(long accountId, EntryType entryType, long amountCents, UUID transferId, long balanceAfterCents) // for transfer entries
+    public LedgerEntry(Long accountId, EntryType entryType, long amountCents, UUID transferId, long balanceAfterCents) // for transfer entries
     {
         validateParams(entryType, amountCents, transferId, balanceAfterCents, true);
         this.accountId = accountId;

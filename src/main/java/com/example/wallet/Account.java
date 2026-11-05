@@ -2,6 +2,9 @@ package com.example.wallet;
 
 import java.time.Instant;
 
+import com.example.wallet.exceptions.DepositTooLargeException;
+import com.example.wallet.exceptions.InsufficientFundsException;
+
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -66,6 +69,18 @@ public class Account {
         } catch (ArithmeticException e) {
             throw new DepositTooLargeException();
         }
+        return balanceCents;
+    }
+
+    public long withdrawal(long amountCents) {
+        if(amountCents <= 0) {
+            throw new IllegalArgumentException("Withdrawal amount needs to be greater than 0");
+        }
+        long newBalance = Math.subtractExact(balanceCents, amountCents);
+        if (newBalance < 0) {
+            throw new InsufficientFundsException();
+        }
+        balanceCents = newBalance;
         return balanceCents;
     }
 }

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -15,8 +16,10 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 import com.example.wallet.exceptions.AccountNotFoundException;
+import com.example.wallet.exceptions.InsufficientFundsException;
 import com.example.wallet.exceptions.SameAccountException;
 
 public class AccountServiceTest {
@@ -91,12 +94,99 @@ public class AccountServiceTest {
     }
 
     @Test
+    public void withdrawalAccountNotFoundTest() {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        LedgerRepository ledgerRepository = mock(LedgerRepository.class);
+        AccountService accountService = new AccountService(accountRepository, ledgerRepository);
+        assertThrows(AccountNotFoundException.class, () -> accountService.withdrawal(1L, "owner1", 1000L));
+        verify(ledgerRepository, never()).save(any(LedgerEntry.class));
+        verify(accountRepository, never()).save(any(Account.class));
+    }
+
+    @Test
+    public void withdrawalTooMuchFromAccountThrowsException() {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        LedgerRepository ledgerRepository = mock(LedgerRepository.class);
+        AccountService accountService = new AccountService(accountRepository, ledgerRepository);
+
+        Account account = new Account("owner");
+        account.deposit(500L);
+        when(accountRepository.findLockByOwnerIdAndId("owner", 1L)).thenReturn(Optional.of(account));
+
+        assertThrows(InsufficientFundsException.class, () -> accountService.withdrawal(1L, "owner", 900L));
+        verify(accountRepository, never()).save(any(Account.class));
+        verify(ledgerRepository, never()).save(any(LedgerEntry.class));
+        assertEquals(500L, account.getBalanceCents());
+    }
+
+    @Test
+    public void withdrawalUpdatesBalanceAndWritesLedgerEntry() {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        LedgerRepository ledgerRepository = mock(LedgerRepository.class);
+        AccountService accountService = new AccountService(accountRepository, ledgerRepository);
+
+        Account account = new Account("owner");
+        account.deposit(5000L);
+        when(accountRepository.findLockByOwnerIdAndId("owner", 1L)).thenReturn(Optional.of(account));
+
+        accountService.withdrawal(1L, "owner", 1000L);
+        assertEquals(4000L, account.getBalanceCents());
+        ArgumentCaptor<LedgerEntry> captor = ArgumentCaptor.forClass(LedgerEntry.class);
+        verify(ledgerRepository).save(captor.capture());
+        verify(accountRepository).save(account);
+        assertEquals(1L, captor.getValue().getAccountId());
+        assertEquals(EntryType.WITHDRAWAL, captor.getValue().getEntryType());
+        assertEquals(-1000L, captor.getValue().getAmountCents());
+        assertEquals(4000L, captor.getValue().getBalanceAfterCents());
+    }
+
+    @Test
+    public void withdrawalZeroOrNegativeAmountThrowsException() {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        LedgerRepository ledgerRepository = mock(LedgerRepository.class);
+        AccountService accountService = new AccountService(accountRepository, ledgerRepository);
+
+        assertThrows(IllegalArgumentException.class, () -> accountService.withdrawal(1L, "owner", 0L));
+        assertThrows(IllegalArgumentException.class, () -> accountService.withdrawal(1L, "owner", -100L));
+
+        verify(accountRepository, never()).findLockByOwnerIdAndId(any(), any());
+        verify(ledgerRepository, never()).save(any(LedgerEntry.class));
+        verify(accountRepository, never()).save(any(Account.class));
+    }
+
+@Test
+public void withdrawalWithExactZeroLeftTest() {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        LedgerRepository ledgerRepository = mock(LedgerRepository.class);
+        AccountService accountService = new AccountService(accountRepository, ledgerRepository);
+
+        Account account = new Account("owner");
+        account.deposit(1000L);
+        account.deposit(500L);
+        when(accountRepository.findLockByOwnerIdAndId("owner", 1L)).thenReturn(Optional.of(account));
+
+        accountService.withdrawal(1L, "owner", 1500L);
+        assertEquals(0L, account.getBalanceCents());
+        ArgumentCaptor<LedgerEntry> captor = ArgumentCaptor.forClass(LedgerEntry.class);
+        verify(ledgerRepository).save(captor.capture());
+        assertEquals(1L, captor.getValue().getAccountId());
+        assertEquals(EntryType.WITHDRAWAL, captor.getValue().getEntryType());
+        assertEquals(-1500L, captor.getValue().getAmountCents());
+        assertEquals(0L, captor.getValue().getBalanceAfterCents());
+
+        verify(accountRepository).save(account);
+}
+
+    @Test
     public void transferToSameAccountThrowsException() {
         AccountRepository accountRepository = mock(AccountRepository.class);
         LedgerRepository ledgerRepository = mock(LedgerRepository.class);
         AccountService accountService = new AccountService(accountRepository, ledgerRepository);
 
         assertThrows(SameAccountException.class, () -> accountService.transfer(1L, 1L, "owner", 1000L));
+        verify(accountRepository, never()).save(any(Account.class));
+        verify(ledgerRepository, never()).save(any(LedgerEntry.class));
+
     }
 
     @Test
@@ -155,9 +245,11 @@ public class AccountServiceTest {
         AccountService accountService = new AccountService(accountRepository, ledgerRepository);
 
         when(accountRepository.findById(1L)).thenReturn(Optional.empty());
-        when(accountRepository.findById(2L)).thenReturn(Optional.of(new Account("owner")));
 
         assertThrows(AccountNotFoundException.class, () -> accountService.transfer(2L, 1L, "owner", 1000L));
+        verify(accountRepository, never()).findLockById(any());
+        verify(ledgerRepository, never()).save(any(LedgerEntry.class));
+        verify(accountRepository, never()).save(any(Account.class));
     }
 
     @Test
@@ -167,8 +259,110 @@ public class AccountServiceTest {
         AccountService accountService = new AccountService(accountRepository, ledgerRepository);
 
         when(accountRepository.findById(1L)).thenReturn(Optional.of(new Account("owner")));
-        when(accountRepository.findById(2L)).thenReturn(Optional.empty());
+        when(accountRepository.findLockById(1L)).thenReturn(Optional.of(new Account("owner")));
+        when(accountRepository.findLockById(2L)).thenReturn(Optional.empty());
 
         assertThrows(AccountNotFoundException.class, () -> accountService.transfer(2L, 1L, "owner", 1000L));
+        verify(ledgerRepository, never()).save(any(LedgerEntry.class));
+        verify(accountRepository, never()).save(any(Account.class));
     }
+
+    @Test
+    public void transferTooMuchFromAccountThrowsException() {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        LedgerRepository ledgerRepository = mock(LedgerRepository.class);
+        AccountService accountService = new AccountService(accountRepository, ledgerRepository);
+
+        Account fromAccount = new Account("owner");
+        fromAccount.deposit(500L);
+        when(accountRepository.findById(1L)).thenReturn(Optional.of(fromAccount));
+        when(accountRepository.findLockById(1L)).thenReturn(Optional.of(fromAccount));
+
+        Account toAccount = new Account("owner2");
+        toAccount.deposit(1000L);
+        when(accountRepository.findById(2L)).thenReturn(Optional.of(toAccount));
+        when(accountRepository.findLockById(2L)).thenReturn(Optional.of(toAccount));
+
+        assertThrows(InsufficientFundsException.class, () -> accountService.transfer(2L, 1L, "owner", 1000L));
+        verify(accountRepository, never()).save(any(Account.class));
+        verify(ledgerRepository, never()).save(any(LedgerEntry.class));
+        assertEquals(500L, fromAccount.getBalanceCents());
+        assertEquals(1000L, toAccount.getBalanceCents());
+    }
+
+    @Test
+    public void transferFromAccountNotOwnedByOwnerIdThrowsException() {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        LedgerRepository ledgerRepository = mock(LedgerRepository.class);
+        AccountService accountService = new AccountService(accountRepository, ledgerRepository);
+
+        Account fromAccount = new Account("owner");
+        fromAccount.deposit(500L);
+        when(accountRepository.findById(1L)).thenReturn(Optional.of(fromAccount));
+
+        assertThrows(AccountNotFoundException.class, () -> accountService.transfer(2L, 1L, "not-owner", 1000L));
+        verify(accountRepository, never()).findLockById(any());
+        verify(ledgerRepository, never()).save(any(LedgerEntry.class));
+        verify(accountRepository, never()).save(any(Account.class));
+    }
+
+    @Test
+    public void transferZeroOrNegativeAmountThrowsException() {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        LedgerRepository ledgerRepository = mock(LedgerRepository.class);
+        AccountService accountService = new AccountService(accountRepository, ledgerRepository);
+
+        assertThrows(IllegalArgumentException.class, () -> accountService.transfer(2L, 1L, "owner", 0L));
+        assertThrows(IllegalArgumentException.class, () -> accountService.transfer(2L, 1L, "owner", -100L));
+
+        verify(accountRepository, never()).findLockById(any());
+        verify(ledgerRepository, never()).save(any(LedgerEntry.class));
+        verify(accountRepository, never()).save(any(Account.class));
+    }
+
+    @Test
+    public void transferCorrectLockOrderTest() {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        LedgerRepository ledgerRepository = mock(LedgerRepository.class);
+        AccountService accountService = new AccountService(accountRepository, ledgerRepository);
+
+        Account fromAccount = new Account("owner1");
+        fromAccount.deposit(2000L);
+        when(accountRepository.findById(1L)).thenReturn(Optional.of(fromAccount));
+        when(accountRepository.findLockById(1L)).thenReturn(Optional.of(fromAccount));
+
+        Account toAccount = new Account("owner2");
+        when(accountRepository.findById(2L)).thenReturn(Optional.of(toAccount));
+        when(accountRepository.findLockById(2L)).thenReturn(Optional.of(toAccount));
+
+        accountService.transfer(2L, 1L, "owner1", 1100L);
+
+        InOrder inOrder = inOrder(accountRepository);
+        inOrder.verify(accountRepository).findLockById(1L); // this call must come first
+        inOrder.verify(accountRepository).findLockById(2L); // and this one after it
+
+    }
+
+    @Test
+    public void transferCorrectLockOrder2Test() {
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        LedgerRepository ledgerRepository = mock(LedgerRepository.class);
+        AccountService accountService = new AccountService(accountRepository, ledgerRepository);
+
+        Account fromAccount = new Account("owner2");
+        fromAccount.deposit(2100L);
+        when(accountRepository.findById(2L)).thenReturn(Optional.of(fromAccount));
+        when(accountRepository.findLockById(2L)).thenReturn(Optional.of(fromAccount));
+
+        Account toAccount = new Account("owner1");
+        when(accountRepository.findById(1L)).thenReturn(Optional.of(toAccount));
+        when(accountRepository.findLockById(1L)).thenReturn(Optional.of(toAccount));
+
+        accountService.transfer(1L, 2L, "owner2", 900L);
+
+        InOrder inOrder = inOrder(accountRepository);
+        inOrder.verify(accountRepository).findLockById(1L); // this call must come first
+        inOrder.verify(accountRepository).findLockById(2L); // and this one after it
+    }
+
 }

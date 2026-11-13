@@ -37,6 +37,8 @@ public class AccountService {
 
     @Transactional
     public LedgerEntry withdrawal(long id, String ownerId, long amountCents) {
+        if (amountCents <= 0)
+            throw new IllegalArgumentException("Withdrawal amount must be greater than 0");
         Account account = accountRepository.findLockByOwnerIdAndId(ownerId, id)
                 .orElseThrow(() -> new AccountNotFoundException());
         long balanceCents = account.withdrawal(amountCents);
@@ -48,6 +50,8 @@ public class AccountService {
     public List<LedgerEntry> transfer(long toAccountId, long fromAccountId, String fromOwnerId, long amountCents) {
         if (toAccountId == fromAccountId)
             throw new SameAccountException();
+        else if (amountCents <= 0)
+            throw new IllegalArgumentException("Transfer amount must be greater than zero.");
         Account toAccount;
         Account fromAccount;
         if (!accountRepository.findById(fromAccountId)
